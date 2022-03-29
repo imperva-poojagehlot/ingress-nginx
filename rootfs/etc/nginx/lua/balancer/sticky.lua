@@ -136,7 +136,7 @@ function _M.balance(self)
 
   local key = self:get_cookie()
   if key then
-    upstream_from_cookie = self.instance:find(key)
+    upstream_from_cookie = self.instance:find_index(key)
   end
 
   local last_failure = self.get_last_failure()

@@ -20,7 +20,18 @@ local function create_map(nodes, salt)
     local hash_key = ngx.md5(key)
     hash_map[hash_key] = endpoint
   end
+  return hash_map
+end
 
+
+local function create_indexed_map(nodes, salt)
+  local hash_map = {}
+  local count = 0
+  for endpoint, _ in pairs(nodes) do
+    hash_map[count] = endpoint
+    ngx.log(ngx.ERR, string.format("count=%s, endpoint=%s", count, endpoint))
+    count = count + 1
+  end
   return hash_map
 end
 
@@ -67,12 +78,14 @@ function _M.new(self, endpoints, hash_salt)
   if hash_salt == nil then
     hash_salt = ''
   end
-
+  local index_map = create_indexed_map(endpoints, hash_salt)
   -- the endpoints have to be saved as 'nodes' to keep compatibility to balancer.resty
   local o = {
     salt = hash_salt,
     nodes = endpoints,
-    map = create_map(endpoints, hash_salt)
+    map = create_map(endpoints, hash_salt),
+    indexed_map = index_map,
+    length_index = get_length_map(index_map)
   }
 
   setmetatable(o, self)
@@ -85,6 +98,8 @@ end
 function _M.reinit(self, nodes)
   self.nodes = nodes
   self.map = create_map(nodes, self.salt)
+  self.indexed_map = create_indexed_map(nodes, self.salt)
+  self.length_index = get_length_map(self.indexed_map)
 end
 
 --- find looks up a node by hash key.
@@ -92,6 +107,21 @@ end
 -- @treturn string The node.
 function _M.find(self, key)
   return self.map[key]
+end
+
+function get_length_map(map)
+  local count = 0
+  for _ in pairs(map) do count = count + 1 end
+  return count
+end
+
+function _M.find_index(self, key)
+  local mod_index = 0
+  local total_endpoint = 0 
+  local cookie_int
+  cookie_int = tonumber(key)
+  mod_index = cookie_int % self.length_index
+  return self.indexed_map[mod_index]
 end
 
 --- random picks a random node from the hashmap.

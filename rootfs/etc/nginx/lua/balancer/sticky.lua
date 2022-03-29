@@ -13,8 +13,10 @@ local setmetatable = setmetatable
 
 local _M = balancer_resty:new()
 local DEFAULT_COOKIE_NAME = "route"
+local COOKIE_VALUE_DELIMITER = "|"
 
 function _M.cookie_name(self)
+  ngx.log(ngx.ERR, "cookie affinity", self.cookie_session_affinity.name)
   return self.cookie_session_affinity.name or DEFAULT_COOKIE_NAME
 end
 
@@ -22,7 +24,8 @@ function _M.new(self)
   local o = {
     alternative_backends = nil,
     cookie_session_affinity = nil,
-    traffic_shaping_policy = nil
+    traffic_shaping_policy = nil,
+    backend_key = nil
   }
 
   setmetatable(o, self)
@@ -31,13 +34,38 @@ function _M.new(self)
   return o
 end
 
-function _M.get_cookie(self)
+function _M.get_cookie_parsed(self)
   local cookie, err = ck:new()
   if not cookie then
     ngx.log(ngx.ERR, err)
   end
 
-  return cookie:get(self:cookie_name())
+  local result = {
+    upstream_key = nil,
+    backend_key = nil
+  }
+
+  local raw_value = cookie:get(self:cookie_name())
+  ngx.log(ngx.ERR, "found cookie value", raw_value)
+  if not raw_value then
+    return result
+  end
+
+  local parsed_value, len = split.split_string(raw_value, COOKIE_VALUE_DELIMITER)
+  if len == 0 then
+    return result
+  end
+
+  result.upstream_key = parsed_value[1]
+  if len > 1 then
+    result.backend_key = parsed_value[2]
+  end
+
+  return result
+end
+
+function _M.get_cookie(self)
+  return self:get_cookie_parsed().upstream_key
 end
 
 function _M.set_cookie(self, value)
@@ -61,13 +89,18 @@ function _M.set_cookie(self, value)
     end
   end
 
+  local cookie_secure = self.cookie_session_affinity.secure
+  if cookie_secure == nil then
+    cookie_secure = ngx.var.https == "on"
+  end
+
   local cookie_data = {
     key = self:cookie_name(),
-    value = value,
+    value = value .. COOKIE_VALUE_DELIMITER .. self.backend_key,
     path = cookie_path,
     httponly = true,
     samesite = cookie_samesite,
-    secure = ngx.var.https == "on",
+    secure = cookie_secure,
   }
 
   if self.cookie_session_affinity.expires and self.cookie_session_affinity.expires ~= "" then
@@ -84,6 +117,10 @@ function _M.set_cookie(self, value)
   if not ok then
     ngx.log(ngx.ERR, err)
   end
+end
+
+function _M.is_affinitized(self)
+  return self:get_cookie_parsed().backend_key == self.backend_key
 end
 
 function _M.get_last_failure()
@@ -135,14 +172,20 @@ function _M.balance(self)
   local upstream_from_cookie
 
   local key = self:get_cookie()
+  local cookie_value = self:get_cookie()
+  ngx.log(ngx.ERR, string.format("cookie is %s", cookie_value))
   if key then
-    upstream_from_cookie = self.instance:find(key)
+    reqid_cookie_mapping = self.instance:find_reqid(key)
+    ngx.log(ngx.ERR, string.format("checking mapping  %s %s", cookie_value, reqid_cookie_mapping))
+    if reqid_cookie_mapping then
+        upstream_from_cookie = self.instance:find(reqid_cookie_mapping)
+    end
   end
 
   local last_failure = self.get_last_failure()
   local should_pick_new_upstream = last_failure ~= nil and
     self.cookie_session_affinity.change_on_failure or upstream_from_cookie == nil
-
+  ngx.log(ngx.ERR, string.format("select new upstream from cookie %s", upstream_from_cookie))
   if not should_pick_new_upstream then
     return upstream_from_cookie
   end
@@ -153,6 +196,8 @@ function _M.balance(self)
   if not new_upstream then
     ngx.log(ngx.WARN, string.format("failed to get new upstream; using upstream %s", new_upstream))
   elseif should_set_cookie(self) then
+    ngx.log(ngx.ERR, string.format("setting cookie %s %s", cookie_value, key))
+    self.instance:update_reqid(cookie_value, key)
     self:set_cookie(key)
   end
 
@@ -166,6 +211,7 @@ function _M.sync(self, backend)
   self.traffic_shaping_policy = backend.trafficShapingPolicy
   self.alternative_backends = backend.alternativeBackends
   self.cookie_session_affinity = backend.sessionAffinityConfig.cookieSessionAffinity
+  self.backend_key = ngx.md5(ngx.md5(backend.name) .. backend.name)
 end
 
 return _M

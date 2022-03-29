@@ -24,6 +24,11 @@ local function create_map(nodes, salt)
   return hash_map
 end
 
+local function create_reqidmap(nodes, salt)
+  local reqid_map = {}
+  return reqid_map
+end
+
 --- get_random_node picks a random node from the given map.
 -- @tparam {[string], ...} map A key to node hash table.
 -- @treturn string,string The node and its key
@@ -72,7 +77,8 @@ function _M.new(self, endpoints, hash_salt)
   local o = {
     salt = hash_salt,
     nodes = endpoints,
-    map = create_map(endpoints, hash_salt)
+    map = create_map(endpoints, hash_salt),
+    reqid_map = create_reqidmap(endpoints, hash_salt)
   }
 
   setmetatable(o, self)
@@ -85,6 +91,7 @@ end
 function _M.reinit(self, nodes)
   self.nodes = nodes
   self.map = create_map(nodes, self.salt)
+  self.reqid_map = create_reqidmap(nodes, self.salt)
 end
 
 --- find looks up a node by hash key.
@@ -92,6 +99,14 @@ end
 -- @treturn string The node.
 function _M.find(self, key)
   return self.map[key]
+end
+
+function _M.find_reqid(self, key)
+  return self.reqid_map[key]
+end
+
+function _M.update_reqid(self, key, val)
+  self.reqid_map[key] = val
 end
 
 --- random picks a random node from the hashmap.

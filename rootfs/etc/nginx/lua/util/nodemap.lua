@@ -28,9 +28,13 @@ local function create_indexed_map(nodes, salt)
   local hash_map = {}
   local count = 0
   for endpoint, _ in pairs(nodes) do
-    hash_map[count] = endpoint
+    table.insert(hash_map, endpoint)
     ngx.log(ngx.ERR, string.format("count=%s, endpoint=%s", count, endpoint))
     count = count + 1
+  end
+  table.sort(hash_map, function(a, b) return a < b end);
+  for k, v in pairs(hash_map) do 
+    ngx.log(ngx.ERR, k, v)
   end
   return hash_map
 end
@@ -121,6 +125,7 @@ function _M.find_index(self, key)
   local cookie_int
   cookie_int = tonumber(key)
   mod_index = cookie_int % self.length_index
+  mod_index = mod_index + 1
   return self.indexed_map[mod_index]
 end
 

@@ -142,7 +142,6 @@ function _M.balance(self)
   local last_failure = self.get_last_failure()
   local should_pick_new_upstream = last_failure ~= nil and
     self.cookie_session_affinity.change_on_failure or upstream_from_cookie == nil
-
   if not should_pick_new_upstream then
     return upstream_from_cookie
   end
